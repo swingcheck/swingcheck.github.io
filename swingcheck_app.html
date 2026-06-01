@@ -1,10 +1,19 @@
-<!-- SwingCheck Build: 2026-06-01 - Analytics pipeline (page_load, analyze_start, analyze_complete) -->
+<!-- SwingCheck Build: 2026-06-01 - Google Analytics + custom events -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>SwingCheck Pro</title>
+    
+    <!-- Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-REZZ4NT4ZQ"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-REZZ4NT4ZQ');
+    </script>
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2709,22 +2718,8 @@ body {
         class SwingCheckApp {
             constructor() {
                 // ═══ Analytics ═══
-                this.ANALYTICS_URL = 'https://script.google.com/macros/s/AKfycbythRWQcXHusloaMaIlw7QZIwEk1NHLXQayLmsMzjJkO_YnpgzpYaeoqOCkvrjiUli4/exec';
-                this.sessionId = this.getOrCreateSessionId();
-                this._pageLoadTracked = false;
-                // Track page_load on first user interaction (click/touch/scroll)
-                const trackPageLoad = () => {
-                    if (!this._pageLoadTracked) {
-                        this._pageLoadTracked = true;
-                        this.trackEvent('page_load');
-                    }
-                    document.removeEventListener('click', trackPageLoad);
-                    document.removeEventListener('touchstart', trackPageLoad);
-                    document.removeEventListener('scroll', trackPageLoad);
-                };
-                document.addEventListener('click', trackPageLoad, { once: true });
-                document.addEventListener('touchstart', trackPageLoad, { once: true });
-                document.addEventListener('scroll', trackPageLoad, { once: true });
+                // Google Analytics handles page views automatically.
+                // Custom events tracked via gtag() below.
                 
                 // MediaPipe Pose
                 this.pose = null;
@@ -3705,7 +3700,7 @@ body {
                 this.analyzeBtn.disabled = true;
                 
                 this.showScreen('analyzing');
-                this.trackEvent('analyze_start', { club: this.clubType, angle: this.cameraAngle });
+                this.trackEvent('analyze_start', { club_type: this.clubType, camera_angle: this.cameraAngle });
                 this.updateProgress(0, 'Initializing pose detection');
                 
                 // Abort any in-progress background caching
@@ -3774,7 +3769,7 @@ body {
                     setTimeout(() => {
                         this.renderResults();
                         this.showScreen('results');
-                        this.trackEvent('analyze_complete', { score: this.metrics?.score || '' });
+                        this.trackEvent('analyze_complete', { score: this.metrics?.score || 0, club_type: this.clubType });
                         // Play Apple Watch-style score reveal overlay
                         this.playScoreReveal();
                         // Start caching frames in background (non-blocking)
@@ -5722,57 +5717,12 @@ Keep your total response under 250 words. Be encouraging — they're working to 
             // ═══════════════════════════════════════════
             // ANALYTICS
             // ═══════════════════════════════════════════
-            getOrCreateSessionId() {
-                let sid = localStorage.getItem('sc_session_id');
-                if (!sid) {
-                    sid = 'sc_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 6);
-                    localStorage.setItem('sc_session_id', sid);
-                }
-                return sid;
-            }
-            
             trackEvent(event, extra = {}) {
-                if (!this.ANALYTICS_URL || this.ANALYTICS_URL.includes('YOUR_')) return;
                 try {
-                    // Create hidden iframe target if needed
-                    let frame = document.getElementById('sc_analytics_frame');
-                    if (!frame) {
-                        frame = document.createElement('iframe');
-                        frame.name = 'sc_analytics_frame';
-                        frame.id = 'sc_analytics_frame';
-                        frame.style.display = 'none';
-                        document.body.appendChild(frame);
+                    if (typeof gtag === 'function') {
+                        gtag('event', event, extra);
                     }
-                    
-                    // Form POST to hidden iframe — proven to work with user gesture
-                    const form = document.createElement('form');
-                    form.method = 'POST';
-                    form.action = this.ANALYTICS_URL;
-                    form.target = 'sc_analytics_frame';
-                    
-                    const fields = {
-                        event: event,
-                        sid: this.sessionId,
-                        club: extra.club || this.clubType || '',
-                        angle: extra.angle || this.cameraAngle || '',
-                        score: extra.score || '',
-                        ua: (navigator.userAgent || '').substring(0, 100)
-                    };
-                    
-                    for (const [key, val] of Object.entries(fields)) {
-                        const input = document.createElement('input');
-                        input.type = 'hidden';
-                        input.name = key;
-                        input.value = val;
-                        form.appendChild(input);
-                    }
-                    
-                    document.body.appendChild(form);
-                    form.submit();
-                    form.remove();
-                } catch (e) {
-                    // Analytics should never break the app
-                }
+                } catch (e) {}
             }
             
             // ═══════════════════════════════════════════
