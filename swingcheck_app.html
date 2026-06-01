@@ -5730,8 +5730,8 @@ Keep your total response under 250 words. Be encouraging — they're working to 
                         score: extra.score || '',
                         ua: navigator.userAgent.substring(0, 120)
                     });
-                    // Fire and forget — don't block the UI
-                    fetch(this.ANALYTICS_URL + '?' + params.toString(), { mode: 'no-cors' }).catch(() => {});
+                    // Image beacon — follows redirects (Apps Script redirects, fetch no-cors doesn't)
+                    new Image().src = this.ANALYTICS_URL + '?' + params.toString();
                 } catch (e) {
                     // Analytics should never break the app
                 }
