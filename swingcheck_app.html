@@ -2709,11 +2709,22 @@ body {
         class SwingCheckApp {
             constructor() {
                 // ═══ Analytics ═══
-                // Replace this URL with your deployed Apps Script URL
                 this.ANALYTICS_URL = 'https://script.google.com/macros/s/AKfycbythRWQcXHusloaMaIlw7QZIwEk1NHLXQayLmsMzjJkO_YnpgzpYaeoqOCkvrjiUli4/exec';
                 this.sessionId = this.getOrCreateSessionId();
-                // Delay page_load ping to ensure iframe target is ready
-                setTimeout(() => this.trackEvent('page_load'), 1500);
+                this._pageLoadTracked = false;
+                // Track page_load on first user interaction (click/touch/scroll)
+                const trackPageLoad = () => {
+                    if (!this._pageLoadTracked) {
+                        this._pageLoadTracked = true;
+                        this.trackEvent('page_load');
+                    }
+                    document.removeEventListener('click', trackPageLoad);
+                    document.removeEventListener('touchstart', trackPageLoad);
+                    document.removeEventListener('scroll', trackPageLoad);
+                };
+                document.addEventListener('click', trackPageLoad, { once: true });
+                document.addEventListener('touchstart', trackPageLoad, { once: true });
+                document.addEventListener('scroll', trackPageLoad, { once: true });
                 
                 // MediaPipe Pose
                 this.pose = null;
@@ -5723,7 +5734,7 @@ Keep your total response under 250 words. Be encouraging — they're working to 
             trackEvent(event, extra = {}) {
                 if (!this.ANALYTICS_URL || this.ANALYTICS_URL.includes('YOUR_')) return;
                 try {
-                    // Form POST to hidden iframe — same pattern as the working waitlist form
+                    // Create hidden iframe target if needed
                     let frame = document.getElementById('sc_analytics_frame');
                     if (!frame) {
                         frame = document.createElement('iframe');
@@ -5733,6 +5744,7 @@ Keep your total response under 250 words. Be encouraging — they're working to 
                         document.body.appendChild(frame);
                     }
                     
+                    // Form POST to hidden iframe — proven to work with user gesture
                     const form = document.createElement('form');
                     form.method = 'POST';
                     form.action = this.ANALYTICS_URL;
@@ -5744,7 +5756,7 @@ Keep your total response under 250 words. Be encouraging — they're working to 
                         club: extra.club || this.clubType || '',
                         angle: extra.angle || this.cameraAngle || '',
                         score: extra.score || '',
-                        ua: navigator.userAgent.substring(0, 120)
+                        ua: (navigator.userAgent || '').substring(0, 100)
                     };
                     
                     for (const [key, val] of Object.entries(fields)) {
