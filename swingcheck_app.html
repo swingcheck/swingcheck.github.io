@@ -2712,7 +2712,8 @@ body {
                 // Replace this URL with your deployed Apps Script URL
                 this.ANALYTICS_URL = 'https://script.google.com/macros/s/AKfycbythRWQcXHusloaMaIlw7QZIwEk1NHLXQayLmsMzjJkO_YnpgzpYaeoqOCkvrjiUli4/exec';
                 this.sessionId = this.getOrCreateSessionId();
-                this.trackEvent('page_load');
+                // Delay page_load ping to ensure iframe target is ready
+                setTimeout(() => this.trackEvent('page_load'), 1500);
                 
                 // MediaPipe Pose
                 this.pose = null;
