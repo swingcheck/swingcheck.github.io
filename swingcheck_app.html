@@ -5722,16 +5722,41 @@ Keep your total response under 250 words. Be encouraging — they're working to 
             trackEvent(event, extra = {}) {
                 if (!this.ANALYTICS_URL || this.ANALYTICS_URL.includes('YOUR_')) return;
                 try {
-                    const params = new URLSearchParams({
+                    // Form POST to hidden iframe — same pattern as the working waitlist form
+                    let frame = document.getElementById('sc_analytics_frame');
+                    if (!frame) {
+                        frame = document.createElement('iframe');
+                        frame.name = 'sc_analytics_frame';
+                        frame.id = 'sc_analytics_frame';
+                        frame.style.display = 'none';
+                        document.body.appendChild(frame);
+                    }
+                    
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = this.ANALYTICS_URL;
+                    form.target = 'sc_analytics_frame';
+                    
+                    const fields = {
                         event: event,
                         sid: this.sessionId,
                         club: extra.club || this.clubType || '',
                         angle: extra.angle || this.cameraAngle || '',
                         score: extra.score || '',
                         ua: navigator.userAgent.substring(0, 120)
-                    });
-                    // Image beacon — follows redirects (Apps Script redirects, fetch no-cors doesn't)
-                    new Image().src = this.ANALYTICS_URL + '?' + params.toString();
+                    };
+                    
+                    for (const [key, val] of Object.entries(fields)) {
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = key;
+                        input.value = val;
+                        form.appendChild(input);
+                    }
+                    
+                    document.body.appendChild(form);
+                    form.submit();
+                    form.remove();
                 } catch (e) {
                     // Analytics should never break the app
                 }
