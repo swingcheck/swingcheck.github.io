@@ -1,4 +1,4 @@
-<!-- SwingCheck Build: 2026-04-16 - Phase 2: Score Reveal (count-up, ring, skeleton, particles) -->
+<!-- SwingCheck Build: 2026-06-01 - Analytics pipeline (page_load, analyze_start, analyze_complete) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2708,6 +2708,12 @@ body {
         
         class SwingCheckApp {
             constructor() {
+                // ═══ Analytics ═══
+                // Replace this URL with your deployed Apps Script URL
+                this.ANALYTICS_URL = 'https://script.google.com/macros/s/AKfycbythRWQcXHusloaMaIlw7QZIwEk1NHLXQayLmsMzjJkO_YnpgzpYaeoqOCkvrjiUli4/exec';
+                this.sessionId = this.getOrCreateSessionId();
+                this.trackEvent('page_load');
+                
                 // MediaPipe Pose
                 this.pose = null;
                 this.video = null;
@@ -3687,6 +3693,7 @@ body {
                 this.analyzeBtn.disabled = true;
                 
                 this.showScreen('analyzing');
+                this.trackEvent('analyze_start', { club: this.clubType, angle: this.cameraAngle });
                 this.updateProgress(0, 'Initializing pose detection');
                 
                 // Abort any in-progress background caching
@@ -3755,6 +3762,7 @@ body {
                     setTimeout(() => {
                         this.renderResults();
                         this.showScreen('results');
+                        this.trackEvent('analyze_complete', { score: this.metrics?.score || '' });
                         // Play Apple Watch-style score reveal overlay
                         this.playScoreReveal();
                         // Start caching frames in background (non-blocking)
@@ -5697,6 +5705,36 @@ Keep your total response under 250 words. Be encouraging — they're working to 
                 
                 // Scroll to result
                 resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+            
+            // ═══════════════════════════════════════════
+            // ANALYTICS
+            // ═══════════════════════════════════════════
+            getOrCreateSessionId() {
+                let sid = localStorage.getItem('sc_session_id');
+                if (!sid) {
+                    sid = 'sc_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 6);
+                    localStorage.setItem('sc_session_id', sid);
+                }
+                return sid;
+            }
+            
+            trackEvent(event, extra = {}) {
+                if (!this.ANALYTICS_URL || this.ANALYTICS_URL.includes('YOUR_')) return;
+                try {
+                    const params = new URLSearchParams({
+                        event: event,
+                        sid: this.sessionId,
+                        club: extra.club || this.clubType || '',
+                        angle: extra.angle || this.cameraAngle || '',
+                        score: extra.score || '',
+                        ua: navigator.userAgent.substring(0, 120)
+                    });
+                    // Fire and forget — don't block the UI
+                    fetch(this.ANALYTICS_URL + '?' + params.toString(), { mode: 'no-cors' }).catch(() => {});
+                } catch (e) {
+                    // Analytics should never break the app
+                }
             }
             
             // ═══════════════════════════════════════════
