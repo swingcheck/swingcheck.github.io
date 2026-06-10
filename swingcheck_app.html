@@ -1,4 +1,4 @@
-<!-- SwingCheck Build: 2026-06-01 - Google Analytics + custom events -->
+<!-- SwingCheck Build: 2026-06-10 - Gemini model upgrade (3.5 Flash → 3 Flash → 2.5 Flash) -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5290,7 +5290,7 @@ body {
                 
                 // === MODEL SELECTION: remember which model works ===
                 const cachedModel = sessionStorage.getItem('swingcheck_working_model');
-                const allModels = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview'];
+                const allModels = ['gemini-3.5-flash', 'gemini-3-flash', 'gemini-2.5-flash'];
                 const models = cachedModel 
                     ? [cachedModel, ...allModels.filter(m => m !== cachedModel)]
                     : allModels;
