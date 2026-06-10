@@ -5513,31 +5513,31 @@ body {
                 const isRight = data.settings.handedness === 'right';
                 const leadSide = isRight ? 'left' : 'right';
                 const trailSide = isRight ? 'right' : 'left';
+                const club = data.settings.clubType;
                 
-                // Head movement (address to impact)
+                // Head movement (address to impact) — sway detection
                 if (kf.address?.landmarks?.nose && kf.impact?.landmarks?.nose) {
                     const headDriftX = Math.abs(kf.impact.landmarks.nose.x - kf.address.landmarks.nose.x);
                     const headDriftY = Math.abs(kf.impact.landmarks.nose.y - kf.address.landmarks.nose.y);
-                    if (headDriftX > 0.04) obs.push('Head moves laterally through the swing — possible sway');
-                    if (headDriftY > 0.03) obs.push('Head drops or rises through impact — possible early extension or dip');
-                    if (headDriftX <= 0.04 && headDriftY <= 0.03) obs.push('Head stays relatively still — good stability');
+                    if (headDriftX > 0.06) obs.push('Significant lateral head movement through impact — likely swaying off the ball, causing inconsistent low point and poor strike quality');
+                    else if (headDriftX > 0.04) obs.push('Mild lateral head movement — slight sway that could affect contact consistency');
+                    if (headDriftY > 0.04) obs.push('Head drops or rises through impact — possible early extension (standing up) or dipping into the ball');
+                    if (headDriftX <= 0.04 && headDriftY <= 0.03) obs.push('Head stays quiet through impact — good stability and consistent center of rotation');
                 }
                 
-                // Weight shift (hip center movement)
+                // Weight shift / hip bump (hip center address to impact)
                 if (kf.address?.landmarks && kf.impact?.landmarks) {
                     const addressHipCenter = (parseFloat(kf.address.landmarks[`${leadSide}Hip`]?.x) + parseFloat(kf.address.landmarks[`${trailSide}Hip`]?.x)) / 2;
                     const impactHipCenter = (parseFloat(kf.impact.landmarks[`${leadSide}Hip`]?.x) + parseFloat(kf.impact.landmarks[`${trailSide}Hip`]?.x)) / 2;
                     const hipShift = impactHipCenter - addressHipCenter;
-                    if (isRight) {
-                        if (hipShift < -0.02) obs.push('Hips shift toward the target through impact — good weight transfer');
-                        else if (hipShift > 0.02) obs.push('Hips hang back through impact — weight may be stuck on trail side');
-                    } else {
-                        if (hipShift > 0.02) obs.push('Hips shift toward the target through impact — good weight transfer');
-                        else if (hipShift < -0.02) obs.push('Hips hang back through impact — weight may be stuck on trail side');
-                    }
+                    const shiftTowardTarget = isRight ? (hipShift < -0.02) : (hipShift > 0.02);
+                    const shiftAway = isRight ? (hipShift > 0.02) : (hipShift < -0.02);
+                    if (shiftTowardTarget) obs.push('Good weight transfer — hips shift toward the target through impact, compressing the ball');
+                    else if (shiftAway) obs.push('Weight hanging back on trail side through impact — likely hitting behind the ball (fat shots) or flipping at impact to compensate');
+                    else obs.push('Minimal hip shift — could indicate spinning out (all rotation, no lateral bump) or a restricted lower body');
                 }
                 
-                // Spine angle (address to impact)
+                // Spine angle maintenance (early extension detection)
                 if (kf.address?.landmarks && kf.impact?.landmarks) {
                     const addrNoseY = parseFloat(kf.address.landmarks.nose?.y);
                     const addrHipY = (parseFloat(kf.address.landmarks[`${leadSide}Hip`]?.y) + parseFloat(kf.address.landmarks[`${trailSide}Hip`]?.y)) / 2;
@@ -5546,20 +5546,160 @@ body {
                     const addrSpine = addrHipY - addrNoseY;
                     const impSpine = impHipY - impNoseY;
                     const spineChange = ((impSpine - addrSpine) / addrSpine * 100);
-                    if (spineChange < -8) obs.push('Spine angle straightens through impact (early extension) — losing posture');
-                    else if (spineChange > 8) obs.push('Spine angle increases through impact (dipping) — getting closer to the ground');
-                    else obs.push('Spine angle maintained well through impact');
+                    if (spineChange < -10) obs.push('Early extension — spine angle straightens significantly through impact, hips thrusting toward the ball. This pushes the hands out and often causes blocks right or hooks left');
+                    else if (spineChange < -5) obs.push('Slight loss of posture through impact — minor early extension tendency');
+                    else if (spineChange > 10) obs.push('Dipping through impact — getting lower to the ground, which can cause fat/thin contact');
+                    else obs.push('Good posture maintenance through impact — spine angle stays consistent');
                 }
                 
-                // Hand height at top
+                // Hand height at top of backswing
                 if (kf.top?.landmarks) {
                     const handY = Math.min(
                         parseFloat(kf.top.landmarks[`${leadSide}Wrist`]?.y || 1),
                         parseFloat(kf.top.landmarks[`${trailSide}Wrist`]?.y || 1)
                     );
                     const shoulderY = parseFloat(kf.top.landmarks[`${leadSide}Shoulder`]?.y || 0.5);
-                    if (handY < shoulderY - 0.05) obs.push('Hands get above the shoulders at the top — good height');
-                    else obs.push('Hands stay lower at the top — could limit power');
+                    if (handY < shoulderY - 0.08) obs.push('Hands well above shoulders at the top — good width and arc, generating power');
+                    else if (handY < shoulderY - 0.03) obs.push('Hands reach shoulder height at the top — adequate backswing length');
+                    else obs.push('Hands stay low at the top — short or flat backswing, may limit power and promote a steep over-the-top move');
+                }
+                
+                // Hip sway vs rotation (backswing)
+                if (kf.address?.landmarks && kf.top?.landmarks) {
+                    const addrTrailHipX = parseFloat(kf.address.landmarks[`${trailSide}Hip`]?.x);
+                    const topTrailHipX = parseFloat(kf.top.landmarks[`${trailSide}Hip`]?.x);
+                    const hipSlide = Math.abs(topTrailHipX - addrTrailHipX);
+                    if (hipSlide > 0.04) obs.push('Trail hip slides laterally in the backswing (hip sway) instead of rotating — losing coil and making it hard to start the downswing properly');
+                    else obs.push('Hips rotate in place during the backswing — good lower body stability and coil');
+                }
+                
+                // Lead arm at top (chicken wing / overswing)
+                if (kf.top?.landmarks) {
+                    const leadWrist = kf.top.landmarks[`${leadSide}Wrist`];
+                    const leadElbow = kf.top.landmarks[`${leadSide}Elbow`];
+                    const leadShoulder = kf.top.landmarks[`${leadSide}Shoulder`];
+                    if (leadWrist && leadElbow && leadShoulder) {
+                        const elbowY = parseFloat(leadElbow.y);
+                        const wristY = parseFloat(leadWrist.y);
+                        const shoulderY = parseFloat(leadShoulder.y);
+                        const armStraightness = Math.abs(elbowY - ((wristY + shoulderY) / 2));
+                        if (armStraightness > 0.06) obs.push('Lead arm breaks down at the top — bent lead elbow can cause inconsistent plane and casting on the way down');
+                    }
+                }
+                
+                // Lead arm post-impact (chicken wing)
+                if (kf.finish?.landmarks) {
+                    const leadWrist = kf.finish.landmarks[`${leadSide}Wrist`];
+                    const leadElbow = kf.finish.landmarks[`${leadSide}Elbow`];
+                    if (leadWrist && leadElbow) {
+                        const elbowX = parseFloat(leadElbow.x);
+                        const wristX = parseFloat(leadWrist.x);
+                        const leadShoulderX = parseFloat(kf.finish.landmarks[`${leadSide}Shoulder`]?.x || 0);
+                        // If elbow is far from the line between shoulder and wrist, arm is collapsing
+                        if (Math.abs(elbowX - ((wristX + leadShoulderX) / 2)) > 0.06) {
+                            obs.push('Lead arm collapses after impact (chicken wing) — the lead elbow breaks down instead of extending through the ball. This saps power and indicates the body stopped rotating');
+                        }
+                    }
+                }
+
+                // Finish position (rotation completeness)
+                if (kf.finish?.landmarks) {
+                    const finishHipCenter = (parseFloat(kf.finish.landmarks[`${leadSide}Hip`]?.x) + parseFloat(kf.finish.landmarks[`${trailSide}Hip`]?.x)) / 2;
+                    const finishShoulderCenter = (parseFloat(kf.finish.landmarks[`${leadSide}Shoulder`]?.x) + parseFloat(kf.finish.landmarks[`${trailSide}Shoulder`]?.x)) / 2;
+                    const finishNoseX = parseFloat(kf.finish.landmarks.nose?.x || 0);
+                    const trailFootY = parseFloat(kf.finish.landmarks[`${trailSide}Ankle`]?.y || 0);
+                    const trailKneeY = parseFloat(kf.finish.landmarks[`${trailSide}Knee`]?.y || 0);
+                    // Check if trail heel is up (full finish)
+                    const trailToeX = parseFloat(kf.finish.landmarks[`${trailSide}FootIndex`]?.x || 0);
+                    const trailHeelX = parseFloat(kf.finish.landmarks[`${trailSide}Heel`]?.x || 0);
+                    if (kf.finish.landmarks[`${trailSide}Heel`]) {
+                        const heelToeGap = Math.abs(parseFloat(kf.finish.landmarks[`${trailSide}Heel`]?.y) - parseFloat(kf.finish.landmarks[`${trailSide}FootIndex`]?.y));
+                        if (heelToeGap > 0.02) obs.push('Full finish with trail heel off the ground — good rotation through the ball and committed to the shot');
+                        else obs.push('Flat-footed finish — may not be fully rotating through impact, deceleration tendency');
+                    }
+                }
+                
+                // Shoulder-hip separation (the coil)
+                const shoulderTurn = parseFloat(data.metrics.shoulderTurn);
+                const hipTurn = parseFloat(data.metrics.hipTurn);
+                if (shoulderTurn && hipTurn) {
+                    const separation = shoulderTurn - hipTurn;
+                    if (separation > 40) obs.push(`Strong shoulder-hip separation (${Math.round(separation)}°) — great coil and stored energy for the downswing`);
+                    else if (separation > 25) obs.push(`Good shoulder-hip separation (${Math.round(separation)}°) — decent coil`);
+                    else if (separation > 0) obs.push(`Limited shoulder-hip separation (${Math.round(separation)}°) — shoulders and hips rotating together (all arms, no body coil). This reduces power and often causes an over-the-top move`);
+                }
+                
+                // Tempo assessment
+                const tempo = parseFloat(data.metrics.tempo);
+                if (tempo) {
+                    if (tempo >= 2.8 && tempo <= 3.2) obs.push(`Tour-quality tempo at ${tempo}:1 — the backswing-to-downswing ratio matches what you see on the PGA Tour (3:1 is the gold standard)`);
+                    else if (tempo >= 2.5 && tempo <= 3.5) obs.push(`Solid tempo at ${tempo}:1 — close to the ideal 3:1 range`);
+                    else if (tempo > 3.5) obs.push(`Slow transition at ${tempo}:1 — the downswing is very quick relative to the backswing, which can indicate rushing from the top or casting`);
+                    else if (tempo < 2.5) obs.push(`Quick tempo at ${tempo}:1 — the backswing may be too short or rushed, not giving the lower body time to initiate the downswing`);
+                }
+                
+                // Reverse pivot (weight going to lead side in backswing instead of loading trail side)
+                if (kf.address?.landmarks && kf.top?.landmarks) {
+                    const addrShoulderCenterX = (parseFloat(kf.address.landmarks[`${leadSide}Shoulder`]?.x) + parseFloat(kf.address.landmarks[`${trailSide}Shoulder`]?.x)) / 2;
+                    const topShoulderCenterX = (parseFloat(kf.top.landmarks[`${leadSide}Shoulder`]?.x) + parseFloat(kf.top.landmarks[`${trailSide}Shoulder`]?.x)) / 2;
+                    const shoulderShift = topShoulderCenterX - addrShoulderCenterX;
+                    // In a proper backswing, shoulders move slightly toward trail side
+                    const reversePivot = isRight ? (shoulderShift < -0.03) : (shoulderShift > 0.03);
+                    if (reversePivot) obs.push('Reverse pivot — weight is shifting toward the target during the backswing instead of loading into the trail side. This robs you of power and causes a steep, over-the-top downswing with thin or topped shots');
+                }
+                
+                // Knee flex maintenance (trail knee straightening in backswing)
+                if (kf.address?.landmarks && kf.top?.landmarks) {
+                    const addrTrailKneeY = parseFloat(kf.address.landmarks[`${trailSide}Knee`]?.y);
+                    const addrTrailHipY = parseFloat(kf.address.landmarks[`${trailSide}Hip`]?.y);
+                    const addrTrailAnkleY = parseFloat(kf.address.landmarks[`${trailSide}Ankle`]?.y);
+                    const topTrailKneeY = parseFloat(kf.top.landmarks[`${trailSide}Knee`]?.y);
+                    const topTrailHipY = parseFloat(kf.top.landmarks[`${trailSide}Hip`]?.y);
+                    const topTrailAnkleY = parseFloat(kf.top.landmarks[`${trailSide}Ankle`]?.y);
+                    if (addrTrailKneeY && topTrailKneeY && addrTrailHipY && topTrailHipY) {
+                        const addrKneeFlex = addrTrailAnkleY - addrTrailKneeY;
+                        const topKneeFlex = topTrailAnkleY - topTrailKneeY;
+                        const flexChange = topKneeFlex - addrKneeFlex;
+                        if (flexChange > 0.03) obs.push('Trail knee straightens during the backswing — losing the flex in the trail knee makes it hard to store power and rotate properly. The trail knee should maintain its flex throughout the backswing to act as a brace');
+                    }
+                }
+                
+                // Address posture (hip hinge and knee flex at setup)
+                if (kf.address?.landmarks) {
+                    const noseY = parseFloat(kf.address.landmarks.nose?.y);
+                    const hipY = (parseFloat(kf.address.landmarks[`${leadSide}Hip`]?.y) + parseFloat(kf.address.landmarks[`${trailSide}Hip`]?.y)) / 2;
+                    const kneeY = (parseFloat(kf.address.landmarks[`${leadSide}Knee`]?.y) + parseFloat(kf.address.landmarks[`${trailSide}Knee`]?.y)) / 2;
+                    const ankleY = (parseFloat(kf.address.landmarks[`${leadSide}Ankle`]?.y) + parseFloat(kf.address.landmarks[`${trailSide}Ankle`]?.y)) / 2;
+                    if (noseY && hipY && kneeY && ankleY) {
+                        // Hip hinge: how much the torso tilts forward
+                        const torsoLength = hipY - noseY;
+                        const legLength = ankleY - hipY;
+                        const hingeRatio = torsoLength / legLength;
+                        if (hingeRatio < 0.35) obs.push('Standing too upright at address — not enough hip hinge. This forces a steep, arms-dominated swing. Bend from the hips (not the waist) until your arms hang naturally');
+                        else if (hingeRatio > 0.65) obs.push('Too much forward bend at address — hunching over the ball restricts rotation and causes inconsistent contact. Stand taller and let your arms hang comfortably');
+                        
+                        // Knee flex
+                        const kneeBend = ankleY - kneeY;
+                        const hipToAnkle = ankleY - hipY;
+                        const kneeFlexRatio = kneeBend / hipToAnkle;
+                        if (kneeFlexRatio > 0.58) obs.push('Knees are too straight at address — you want a slight athletic flex, like you are about to sit on a barstool. Straight legs restrict hip rotation');
+                        else if (kneeFlexRatio < 0.42) obs.push('Excessive knee bend at address — squatting too much lowers the swing arc and causes fat contact. Just a slight athletic flex is enough');
+                    }
+                }
+                
+                // Transition sequencing (do hips lead the downswing or do shoulders fire first?)
+                if (kf.top?.landmarks && kf.impact?.landmarks) {
+                    const topLeadHipX = parseFloat(kf.top.landmarks[`${leadSide}Hip`]?.x);
+                    const topLeadShoulderX = parseFloat(kf.top.landmarks[`${leadSide}Shoulder`]?.x);
+                    const impLeadHipX = parseFloat(kf.impact.landmarks[`${leadSide}Hip`]?.x);
+                    const impLeadShoulderX = parseFloat(kf.impact.landmarks[`${leadSide}Shoulder`]?.x);
+                    if (topLeadHipX && topLeadShoulderX && impLeadHipX && impLeadShoulderX) {
+                        const hipMovement = Math.abs(impLeadHipX - topLeadHipX);
+                        const shoulderMovement = Math.abs(impLeadShoulderX - topLeadShoulderX);
+                        if (hipMovement > shoulderMovement * 1.2) obs.push('Good downswing sequencing — hips are leading the shoulders in the transition, which is how the pros generate effortless power. The kinetic chain is firing in the right order: hips, then torso, then arms, then club');
+                        else if (shoulderMovement > hipMovement * 1.1) obs.push('Upper body is firing before the lower body in the transition — the shoulders are outpacing the hips, which typically causes an over-the-top move and a steep club path. Feel like your belt buckle starts the downswing before your shoulders do');
+                        else obs.push('Hips and shoulders are moving together in the transition — decent but not optimal. The best ball-strikers have a noticeable hip lead that creates lag and stored energy');
+                    }
                 }
                 
                 // Confidence caveat
@@ -5568,44 +5708,80 @@ body {
                     obs.push('NOTE: Some body landmarks had lower detection confidence — metric accuracy may be reduced');
                 }
 
-                return `You are a friendly, experienced golf coach giving a lesson to a recreational golfer. 
-You're reviewing their swing based on pose analysis data. Talk like a real coach — warm, encouraging, specific, and practical.
+                // Club-specific context
+                const clubContext = {
+                    driver: 'With the driver, we want a wide arc, full shoulder turn, slight upward attack angle, and a sweeping motion through impact. Ball position should be off the lead heel.',
+                    wood: 'With fairway woods, we want a sweeping strike with a shallow angle of attack — more of a "brush the grass" feel than a descending blow.',
+                    hybrid: 'With hybrids, the swing should be between an iron and a fairway wood — slight descending strike but shallower than a pure iron.',
+                    iron: 'With irons, we want a descending strike, divot after the ball, and good compression. Ball position center to slightly forward depending on the iron.',
+                    wedge: 'With wedges, we want a shorter, more controlled backswing, quiet lower body, firm wrists through impact, and acceleration through the ball — not at it.'
+                }[club] || '';
 
-IMPORTANT RULES:
-- NEVER mention coordinates, x/y values, landmark positions, or numbers like "0.523"
-- NEVER say "the data shows" or "according to the coordinates"
-- Talk about body parts and movements in plain English: "your shoulders," "your hips," "your hands"
-- Be specific about what you SEE, not what the numbers say
-- Keep it conversational — like you're standing next to them at the range
+                // Skill level context based on score
+                let skillContext = '';
+                const score = data.metrics.score;
+                if (score >= 85) skillContext = 'This golfer has tour-quality mechanics. Focus on fine-tuning and advanced concepts — sequencing, pressure shift timing, and shot shaping. Avoid basic tips.';
+                else if (score >= 70) skillContext = 'This is a solid golfer with good fundamentals. They can handle intermediate concepts like lag, shallow vs steep, and transition sequencing.';
+                else if (score >= 50) skillContext = 'This golfer has a developing swing. Focus on one or two fundamental fixes — grip, posture, or rotation. Keep it simple and encouraging.';
+                else skillContext = 'This golfer is early in their journey. Focus on the absolute basics — setup, grip, and making a full turn. Be very encouraging and don\'t overwhelm them.';
 
-THEIR SWING INFO:
+                return `You are a knowledgeable, encouraging golf teaching professional giving a private lesson. You speak like a real golf coach — using proper golf terminology naturally (draw, fade, over the top, early extension, lag, compression, shallowing, coil, separation, etc.) while keeping it accessible.
+
+COACHING STYLE:
+- Conversational, like you're standing on the range together
+- Use golf terms but briefly explain them when first mentioned if the golfer might not know them
+- Be specific about cause and effect: "Your hips are sliding instead of rotating, which forces your hands to flip at impact — that's what causes those inconsistent strikes"
+- Reference what it FEELS like, not just what it looks like: "You should feel like you're sitting into your lead hip"
+- Reference what the BALL would do: "This move tends to produce a weak fade or slice"
+
+${skillContext}
+
+CLUB-SPECIFIC CONTEXT:
+${clubContext}
+
+THEIR SWING DATA:
 - Club: ${data.settings.clubType}
 - Handedness: ${data.settings.handedness}-handed
-- Camera: ${data.settings.cameraAngle}
-- Score: ${data.metrics.score}/100
+- Camera: ${data.settings.cameraAngle} (down-the-line)
+- Overall Score: ${data.metrics.score}/100
 - Tempo: ${data.metrics.tempo}:1 (backswing ${data.metrics.backswingTime}s, downswing ${data.metrics.downswingTime}s)
-- Shoulder turn: ${data.metrics.shoulderTurn}°
-- Hip turn: ${data.metrics.hipTurn}°
-- Spine Tilt: ${data.metrics.xFactor}°
+- Shoulder Turn: ${data.metrics.shoulderTurn}°
+- Hip Turn: ${data.metrics.hipTurn}°
+- Spine Tilt at Address: ${data.metrics.xFactor}°
 
-WHAT THE ANALYSIS DETECTED:
+SWING OBSERVATIONS:
 ${obs.map(o => '• ' + o).join('\n')}
 
-Give your coaching feedback in this format:
+IMPORTANT RULES:
+- NEVER mention coordinates, x/y values, pixels, or landmark numbers
+- NEVER say "the data shows" or "the analysis detected" — just describe what you see in their swing
+- When you mention a fault, connect it to a ball flight: "This tends to cause..." (slice, hook, thin, fat, etc.)
+- When you suggest a fix, describe the FEEL: "It should feel like..." 
 
-**🎯 The One Thing to Fix**
-[The single biggest improvement they should focus on. Explain what's happening in their swing and why it matters — in plain English. Be specific but encouraging.]
+WHAT YOU CANNOT SEE FROM THIS VIEW (do not guess about these):
+- Club face angle at any point in the swing — don't speculate on open/closed face
+- Grip type or grip pressure
+- Ball flight, ball position, or where the ball went
+- True swing plane or club path (you can only infer from body positions)
+- Ground reaction forces or pressure shift
+- Wrist conditions (bowed, cupped, flat) — DTL view doesn't show this reliably
+If any of these are relevant, say "I'd need a face-on view to see..." or "A launch monitor would tell us..." — this builds trust.
 
-**✅ What Looks Good**
-[2-3 things they're doing well. Be genuine and specific — name the body parts and movements.]
+Give your feedback in this format:
 
-**⚠️ Other Things to Work On**
-[1-2 secondary issues. Explain each in one sentence.]
+**The Priority Fix**
+[The single biggest thing hurting their swing. Explain what's happening, why it matters, what ball flight it causes, and what the correct move should feel like. Use proper golf terminology.]
 
-**🏋️ Practice Drill**
-[One specific drill for the priority fix. Give step-by-step instructions they can take to the range. Include how many reps and what to feel for.]
+**What's Working**
+[2-3 genuine strengths. Be specific — reference body positions and golf concepts.]
 
-Keep your total response under 250 words. Be encouraging — they're working to improve and that matters.`;
+**Also Watch**
+[1-2 secondary issues, each in one sentence with the associated ball flight tendency.]
+
+**Range Drill**
+[One specific drill for the priority fix. Step-by-step instructions: setup, execution, reps, and what to feel for. Name the drill if it's a well-known one.]
+
+Keep your total response under 280 words. Be real — they want coaching, not compliments.`;
             }
             
             // Manual re-analyze (button click on results screen)
