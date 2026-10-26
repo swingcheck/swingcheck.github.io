@@ -3114,21 +3114,9 @@ body {
                 };
                 
                 this.initElements();
-                // Guard each init phase: a single missing element (e.g. after markup edits
-                // for face-on) must never white-screen the whole app. A failed phase logs and
-                // the rest of startup continues.
-                try { this.initEventListeners(); } catch (e) { console.error('[init] event listeners failed:', e); }
-                try { this.initGolferSelector(); } catch (e) { console.error('[init] golfer selector failed:', e); }
+                this.initEventListeners();
+                this.initGolferSelector();
                 this.initMediaPipe();
-            }
-
-            // Safe DOM binding helper — use for NEW listeners (esp. face-on controls).
-            // No-ops if the element is missing instead of throwing.
-            _on(id, event, handler, opts) {
-                const el = document.getElementById(id);
-                if (el) el.addEventListener(event, handler, opts);
-                else console.warn(`[init] element #${id} not found — listener skipped`);
-                return el;
             }
             
             initElements() {
@@ -3881,6 +3869,9 @@ body {
                 
                 this._analyzing = true;
                 this.analyzeBtn.disabled = true;
+                // Reset the one-shot retry cap only for a genuinely NEW analysis (not the
+                // internal retry, which sets _forceSeekScan before re-calling startAnalysis).
+                if (!this._forceSeekScan) this._analysisRetried = false;
                 
                 this.showScreen('analyzing');
                 this.trackEvent('analyze_start', { club_type: this.clubType, camera_angle: this.cameraAngle });
@@ -3924,6 +3915,24 @@ body {
                     // Step 3: Detect key frames
                     this.updateProgress(60, 'Analyzing key positions');
                     this.detectKeyFrames();
+                    
+                    // Fail-safe: if the positions collapsed onto the same frame, the analysis
+                    // broke upstream (not a genuine mis-pick). Retry the whole analysis ONCE,
+                    // forcing the deterministic seek-scan capture so the retry can actually
+                    // differ. `_analysisRetried` is a hard cap — it can never loop past one retry.
+                    if (this.keyFramesCollapsed() && !this._analysisRetried) {
+                        console.warn('[analysis] key positions collapsed — retrying once with seek-scan capture');
+                        this._analysisRetried = true;
+                        this._forceSeekScan = true;
+                        this._analyzing = false;
+                        this.analyzeBtn.disabled = false;
+                        return this.startAnalysis();
+                    }
+                    this._forceSeekScan = false;
+                    if (this.keyFramesCollapsed()) {
+                        // Retry already used and it still collapsed → fail honestly, no garbage.
+                        throw new Error('keyframe-collapse: Could not reliably find your swing positions. Try re-uploading, or use a fuller down-the-line clip with your whole body in frame.');
+                    }
                     
                     // Step 4: Calculate metrics
                     this.updateProgress(70, 'Calculating metrics');
@@ -4076,7 +4085,7 @@ body {
                 // for velocity curves regardless of source fps
                 const scanFps = 30;
                 const duration = video.duration;
-                let poseData = [];
+                const poseData = [];
                 
                 // Quick scan at 30fps. Use ONE reusable canvas sized to match the
                 // extraction pass, so the landmarks we cache here are good enough to
@@ -4143,7 +4152,7 @@ body {
                 // Playback is SLOWED so pose inference keeps up (no skipped frames), and frames
                 // are gated to ~scanFps by their true media time so a 60fps clip doesn't double
                 // the work. Falls back to seeking if rVFC isn't available. ──
-                const canPlayCapture = (typeof video.requestVideoFrameCallback === 'function');
+                const canPlayCapture = (typeof video.requestVideoFrameCallback === 'function') && !this._forceSeekScan;
                 let playCaptureOk = false;
                 if (canPlayCapture) {
                     const prevRate = video.playbackRate;
@@ -4202,28 +4211,7 @@ body {
                     throw new Error('Could not detect pose in video');
                 }
                 
-                // ── GUARANTEE MONOTONIC TIME ORDER before anything consumes these arrays. ──
-                // Frames are captured via async pose calls; a trailing capture can land after
-                // the array is read, or the play-through/seek paths can interleave on fallback,
-                // leaving frames out of order or duplicated. Detection (velocity uses
-                // time[i+2]-time[i-2] as a divisor → NaN/Infinity if not ascending), the replay
-                // cache, and the +/- impact adjust ALL assume ascending time. Sort + dedupe here
-                // so a capture race can never scramble the timeline again.
-                const dedupeByTime = (arr) => {
-                    arr.sort((a, b) => a.time - b.time);
-                    const out = [];
-                    for (const d of arr) {
-                        if (out.length === 0 || d.time - out[out.length - 1].time > 1e-4) out.push(d);
-                    }
-                    return out;
-                };
-                poseData = dedupeByTime(poseData);
-                this._scanFrameCache = dedupeByTime(this._scanFrameCache);
-                
-                if (poseData.length < 10) {
-                    throw new Error('Could not detect pose in video');
-                }
-                
+                // ── Velocity: used ONLY as a coarse downswing anchor and a stillness test.
                 // Hand POSITIONS are robust; hand VELOCITY is noisy (one jittery landmark =
                 // a huge fake spike, especially with smoothing off), so median-filter it to
                 // kill single-frame spikes before smoothing. ──
@@ -4411,11 +4399,6 @@ body {
                             });
                         }
                     }
-                    // Defensive: guarantee ascending time + contiguous frameNumbers, so the
-                    // replay cache and the +/- impact adjust (both index-based) stay in sync
-                    // with real time even if the cache order was ever disturbed.
-                    this.framesData.sort((a, b) => a.timestamp - b.timestamp);
-                    this.framesData.forEach((f, i) => { f.frameNumber = i; });
                     if (this.framesData.length >= 8) {
                         console.log(`Frames reused from boundary scan: ${this.framesData.length} (skipped 2nd pose pass)`);
                         this._extractMethod = 'reused';
@@ -4614,6 +4597,11 @@ body {
                 this.originalImpactIdx = impactIdx;
                 this.impactOffset = 0;
                 
+                // Keep the raw indices so a post-detection sanity check can tell whether the
+                // positions collapsed (a known failure signature: something upstream broke and
+                // dumped the same / near-same frame into multiple positions).
+                this.keyFrameIndices = { address: addressIdx, top: topIdx, impact: impactIdx, finish: finishIdx };
+                
                 this.keyFrames = {
                     address: this.framesData[addressIdx],
                     top: this.framesData[topIdx],
@@ -4627,6 +4615,24 @@ body {
                     impact: { idx: impactIdx, quality: this.framesData[impactIdx]?.quality?.toFixed(2) },
                     finish: { idx: finishIdx, quality: this.framesData[finishIdx]?.quality?.toFixed(2) }
                 });
+            }
+            
+            // Fail-safe: the key positions should be spread across the swing. If any two land
+            // on the same (or within COLLAPSE_GAP) frame, detection didn't really "pick the
+            // wrong frame" — something upstream broke and dumped one frame into multiple slots
+            // (the score-0 signature). No real swing has two positions this close, so treat it
+            // as a broken analysis rather than showing garbage.
+            keyFramesCollapsed() {
+                const k = this.keyFrameIndices;
+                if (!k) return false;
+                const COLLAPSE_GAP = 2; // frames; no legitimate swing lands positions this tight
+                const idx = [k.address, k.top, k.impact, k.finish];
+                for (let a = 0; a < idx.length; a++) {
+                    for (let b = a + 1; b < idx.length; b++) {
+                        if (Math.abs(idx[a] - idx[b]) <= COLLAPSE_GAP) return true;
+                    }
+                }
+                return false;
             }
             
             calculateMetrics() {
@@ -4654,31 +4660,20 @@ body {
                 let minShoulderWidth = Infinity, maxShoulderWidth = 0;
                 let minHipWidth = Infinity, maxHipWidth = 0;
                 
-                // Only let a frame contribute to the min/max width search if the relevant
-                // landmarks are confidently tracked. A single low-confidence frame (e.g. a
-                // wrist crossing the torso face-on, collapsing a shoulder/hip point) can
-                // otherwise set a false minimum width and inflate the rotation angle.
-                const WIDTH_VIS_MIN = 0.5;
                 for (const frame of this.framesData) {
-                    const ls = frame.landmarks[this.KEYPOINTS.LEFT_SHOULDER];
-                    const rs = frame.landmarks[this.KEYPOINTS.RIGHT_SHOULDER];
-                    const lh = frame.landmarks[this.KEYPOINTS.LEFT_HIP];
-                    const rh = frame.landmarks[this.KEYPOINTS.RIGHT_HIP];
-                    if (Math.min(ls.visibility ?? 0, rs.visibility ?? 0) >= WIDTH_VIS_MIN) {
-                        const sw = dist2D(ls, rs);
-                        if (sw > maxShoulderWidth) maxShoulderWidth = sw;
-                        if (sw < minShoulderWidth) minShoulderWidth = sw;
-                    }
-                    if (Math.min(lh.visibility ?? 0, rh.visibility ?? 0) >= WIDTH_VIS_MIN) {
-                        const hw = dist2D(lh, rh);
-                        if (hw > maxHipWidth) maxHipWidth = hw;
-                        if (hw < minHipWidth) minHipWidth = hw;
-                    }
+                    const sw = dist2D(
+                        frame.landmarks[this.KEYPOINTS.LEFT_SHOULDER],
+                        frame.landmarks[this.KEYPOINTS.RIGHT_SHOULDER]
+                    );
+                    const hw = dist2D(
+                        frame.landmarks[this.KEYPOINTS.LEFT_HIP],
+                        frame.landmarks[this.KEYPOINTS.RIGHT_HIP]
+                    );
+                    if (sw > maxShoulderWidth) maxShoulderWidth = sw;
+                    if (sw < minShoulderWidth) minShoulderWidth = sw;
+                    if (hw > maxHipWidth) maxHipWidth = hw;
+                    if (hw < minHipWidth) minHipWidth = hw;
                 }
-                // If no frame cleared the gate, fall back to neutral so we never divide by
-                // Infinity/0 below (would produce NaN rotation).
-                if (!isFinite(minShoulderWidth) || maxShoulderWidth <= 0) { minShoulderWidth = maxShoulderWidth = 1; }
-                if (!isFinite(minHipWidth) || maxHipWidth <= 0) { minHipWidth = maxHipWidth = 1; }
                 
                 const shoulderConfidence = minVis(
                     addressLm[this.KEYPOINTS.LEFT_SHOULDER], addressLm[this.KEYPOINTS.RIGHT_SHOULDER],
@@ -6507,24 +6502,17 @@ body {
                     const hipY = (parseFloat(kf.address.landmarks[`${leadSide}Hip`]?.y) + parseFloat(kf.address.landmarks[`${trailSide}Hip`]?.y)) / 2;
                     const kneeY = (parseFloat(kf.address.landmarks[`${leadSide}Knee`]?.y) + parseFloat(kf.address.landmarks[`${trailSide}Knee`]?.y)) / 2;
                     const ankleY = (parseFloat(kf.address.landmarks[`${leadSide}Ankle`]?.y) + parseFloat(kf.address.landmarks[`${trailSide}Ankle`]?.y)) / 2;
-                    // Require the landmarks to be present AND anatomically ordered
-                    // (nose above hip above ankle in image-y). A misdetected frame — more
-                    // common face-on, where the body occludes itself — can flip this ordering
-                    // and produce a zero/negative divisor, which would fire a wrong tip with
-                    // full confidence. Only trust the ratios when the geometry is sane.
-                    const bodyOrdered = noseY && hipY && kneeY && ankleY
-                        && ankleY > hipY && hipY > noseY && ankleY > kneeY;
-                    if (bodyOrdered) {
+                    if (noseY && hipY && kneeY && ankleY) {
                         // Hip hinge: how much the torso tilts forward
                         const torsoLength = hipY - noseY;
-                        const legLength = Math.max(ankleY - hipY, 0.01);
+                        const legLength = ankleY - hipY;
                         const hingeRatio = torsoLength / legLength;
                         if (hingeRatio < 0.35) obs.push('Standing too upright at address — not enough hip hinge. This forces a steep, arms-dominated swing. Bend from the hips (not the waist) until your arms hang naturally');
                         else if (hingeRatio > 0.65) obs.push('Too much forward bend at address — hunching over the ball restricts rotation and causes inconsistent contact. Stand taller and let your arms hang comfortably');
                         
                         // Knee flex
                         const kneeBend = ankleY - kneeY;
-                        const hipToAnkle = Math.max(ankleY - hipY, 0.01);
+                        const hipToAnkle = ankleY - hipY;
                         const kneeFlexRatio = kneeBend / hipToAnkle;
                         if (kneeFlexRatio > 0.58) obs.push('Knees are too straight at address — you want a slight athletic flex, like you are about to sit on a barstool. Straight legs restrict hip rotation');
                         else if (kneeFlexRatio < 0.42) obs.push('Excessive knee bend at address — squatting too much lowers the swing arc and causes fat contact. Just a slight athletic flex is enough');
